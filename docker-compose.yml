@@ -1,0 +1,16 @@
+# Local Postgres for running the app (tests use Testcontainers instead).
+# Start:  docker compose up -d     Stop: docker compose down     Wipe data: docker compose down -v
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: wallet
+      POSTGRES_USER: wallet
+      POSTGRES_PASSWORD: wallet
+    ports:
+      - "5432:5432"
+    volumes:
+      - wallet-pgdata:/var/lib/postgresql/data
+
+volumes:
+  wallet-pgdata:

@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: wallet
+  datasource:
+    url: jdbc:postgresql://localhost:5432/wallet
+    username: wallet
+    password: wallet
+  flyway:
+    enabled: true
