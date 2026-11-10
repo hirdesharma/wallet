@@ -70,6 +70,14 @@ public class ApiClient {
                 "{\"fromWalletId\":" + from + ",\"toWalletId\":" + to + ",\"amount\":" + amount + "}");
     }
 
+    public Response refund(long journalId, long amount) {
+        return post("/journals/" + journalId + "/refunds", newKey(), "{\"amount\":" + amount + "}");
+    }
+
+    public Response reverse(long journalId) {
+        return post("/journals/" + journalId + "/reversals", newKey(), "{}");
+    }
+
     public static String newKey() {
         return UUID.randomUUID().toString();
     }

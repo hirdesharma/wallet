@@ -15,7 +15,7 @@ A digital wallet whose goal is **correctness**: money is never created, lost or 
 | M1 Ledger core: schema, DB guards, `LedgerService.post()` | ✅ |
 | M2 Top-up / transfer / withdraw APIs + idempotency | ✅ |
 | M3 Concurrency: 100 parallel transfers, locking experiment ([results](docs/adr/003-locking-strategy.md)) | ✅ |
-| M4 Refunds & reversals | ⏳ |
+| M4 Refunds & reversals | ✅ |
 | M5 Invariant job + 10-min load run | ⏳ |
 
 ## Run

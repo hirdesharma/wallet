@@ -364,7 +364,7 @@ Only requests that pass validation (layer 1) claim a key, so a 400 is never stor
 
 ## 8. Invariant checker
 
-All four checks run in **one `REPEATABLE READ, READ ONLY` transaction**, so they see a single consistent snapshot even while transfers continue. Under READ COMMITTED, check 2 could compare a balance and a SUM taken at different moments and report false violations.
+All checks run in **one `REPEATABLE READ, READ ONLY` transaction**, so they see a single consistent snapshot even while transfers continue. Under READ COMMITTED, check 2 could compare a balance and a SUM taken at different moments and report false violations.
 
 ```sql
 -- 1. JOURNAL_BALANCED
@@ -384,7 +384,14 @@ FROM accounts;                                  -- violation if pool <> -wallets
 
 -- 4. NO_NEGATIVE_WALLET     (raw > 0 ⇒ user-facing negative)
 SELECT id, balance FROM accounts WHERE type='USER_WALLET' AND balance > 0;
+-- 5. REFUNDS_WITHIN_ORIGINAL   (business rule BR-9 — added after M4)
+SELECT o.id, o.amount, SUM(r.amount) AS refunded
+FROM journals o JOIN journals r ON r.reference_journal_id = o.id AND r.type = 'REFUND'
+GROUP BY o.id, o.amount HAVING SUM(r.amount) > o.amount;
 ```
+
+> Why check 5 exists: in M4 we removed the journal lock as an experiment and 14 refunds of ₹10 succeeded against a ₹100 transfer. Checks 1–4 all still passed, because an over-refund is perfectly *balanced* double-entry. Ledger invariants prove the books add up, not that business rules held, so rules enforced only in code (ADR-005 "app-enforced + DB-detected") need their own detection query.
+
 
 Then the job writes an `invariant_runs` row and one `invariant_violations` row per finding, and logs at ERROR if anything is found. It's scheduled with `@Scheduled(cron = "0 0 2 * * *")` and can also be triggered via `POST /admin/invariant-runs`.
 
