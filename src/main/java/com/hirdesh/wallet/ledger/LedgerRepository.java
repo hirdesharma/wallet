@@ -46,7 +46,8 @@ public class LedgerRepository {
                         FROM postings WHERE journal_id = :id ORDER BY id""")
                 .param("id", id)
                 .query((rs, i) -> new Posting(
-                        rs.getLong("id"), rs.getLong("journal_id"), rs.getLong("account_id"), rs.getLong("amount")))
+                        rs.getLong("id"), rs.getLong("journal_id"),
+                        rs.getLong("account_id"), rs.getLong("amount")))
                 .list();
 
         return jdbc.sql("""

@@ -5,5 +5,17 @@ spring:
     url: jdbc:postgresql://localhost:5432/wallet
     username: wallet
     password: wallet
+    hikari:
+      # O-3: never wait forever for a row lock. A blocked transaction fails with
+      # SQLState 55P03 → 503 TRY_AGAIN instead of hanging the request.
+      connection-init-sql: SET lock_timeout = '5s'
   flyway:
     enabled: true
+
+wallet:
+  idempotency:
+    # How long a claimed key stays IN_PROGRESS before another request may take it over (ADR-004).
+    lease-seconds: 30
+  limits:
+    # BR-2: ₹1,00,000 in paise
+    max-amount: 10000000

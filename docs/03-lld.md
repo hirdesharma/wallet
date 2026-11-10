@@ -120,7 +120,7 @@ CREATE TABLE idempotency_keys (
     owner_token      UUID,                   -- fencing token of current owner (while IN_PROGRESS)
     locked_until     TIMESTAMPTZ,            -- lease expiry (while IN_PROGRESS)
     response_status  INT,                    -- set when COMPLETED
-    response_body    JSONB,
+    response_body    TEXT,                   -- exact JSON bytes returned; replayed verbatim (byte-identical)
     journal_id       BIGINT REFERENCES journals(id),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at     TIMESTAMPTZ
@@ -356,7 +356,9 @@ Why each piece exists:
 - **Fencing token (`owner_token`).** A slow original request whose lease expired can't complete after someone else took over. Its Tx2 matches 0 rows and rolls back its own money movement.
 - **Storing 4xx outcomes.** A retry gets the same answer, which is the behaviour Stripe uses. To try again for real, the client uses a new key.
 
-Request hash = `SHA-256(operation + "\n" + path + "\n" + canonical JSON body)`.
+Request hash = `SHA-256(operation + "\n" + parsed params in fixed order)`, e.g. `TRANSFER\n2\n3\n20000`. Hashing parsed values (not raw JSON) means whitespace/field order in the client body doesn't matter.
+
+Only requests that pass validation (layer 1) claim a key, so a 400 is never stored and the key stays usable.
 
 ---
 
@@ -422,9 +424,9 @@ Test isolation: `TRUNCATE ... RESTART IDENTITY CASCADE` between tests, then re-s
 
 | # | Item | Decide in |
 |---|---|---|
-| O-1 | Wallet creation: map `23505` on `user_id` → `WALLET_EXISTS`; history query SQL + keyset pagination | M2 |
-| O-2 | SQL state → exception mapping (`23505` which constraint?, `23514`, `40P01`, `55P03` lock timeout) | M2 |
-| O-3 | DB/pool config: `lock_timeout`, `statement_timeout`, Hikari pool size vs. test thread count | M2 / M3 |
+| O-1 | ✅ Wallet creation: plain INSERT, `DuplicateKeyException` (23505) → `WALLET_EXISTS`. History: keyset pagination `p.id < :before ORDER BY p.id DESC LIMIT n`, response has `nextBefore` | M2 |
+| O-2 | ✅ `PessimisticLockingFailureException` (40P01 deadlock, 55P03 lock timeout, 40001) + transient/connection errors → 503 `TRY_AGAIN`; trigger/CHECK violations reaching the handler = our bug → 500. See `ApiExceptionHandler` | M2 |
+| O-3 | ✅ partly: `lock_timeout = 5s` via Hikari `connection-init-sql`. Pool size vs. thread count → M3 | M2 / M3 |
 | O-4 | How to switch locking strategy for the experiment (strategy interface vs config flag) | M3 |
 | O-5 | Load-run design: operation mix, duplicate-retry injection, wallet count, thread count | M5 |
 | O-6 | Running the scheduled job on multiple instances (ShedLock / advisory lock). Out of scope for v1, noted only | — |
