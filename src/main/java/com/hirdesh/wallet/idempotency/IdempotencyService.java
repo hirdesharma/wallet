@@ -1,6 +1,7 @@
 package com.hirdesh.wallet.idempotency;
 
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -12,6 +13,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.hirdesh.wallet.common.ApiErrors;
 import com.hirdesh.wallet.common.ErrorCode;
 import com.hirdesh.wallet.common.WalletException;
+import com.hirdesh.wallet.ledger.locking.ConcurrencyConflictException;
+import com.hirdesh.wallet.ledger.locking.LockingMetrics;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -34,13 +37,19 @@ public class IdempotencyService {
     private final TransactionTemplate tx;
     private final ObjectMapper json;
     private final int leaseSeconds;
+    private final LockingMetrics metrics;
+    private final int optimisticMaxAttempts;
 
     public IdempotencyService(IdempotencyRepository repo, TransactionTemplate tx, ObjectMapper json,
-                              @Value("${wallet.idempotency.lease-seconds}") int leaseSeconds) {
+                              @Value("${wallet.idempotency.lease-seconds}") int leaseSeconds,
+                              LockingMetrics metrics,
+                              @Value("${wallet.ledger.optimistic-max-attempts}") int optimisticMaxAttempts) {
         this.repo = repo;
         this.tx = tx;
         this.json = json;
         this.leaseSeconds = leaseSeconds;
+        this.metrics = metrics;
+        this.optimisticMaxAttempts = optimisticMaxAttempts;
     }
 
     /**
@@ -56,18 +65,9 @@ public class IdempotencyService {
             return replay;
         }
 
-        // ── Tx2: work + complete, atomically ───────────────────────
+        // ── Tx2: work + complete, atomically (re-run on optimistic conflict) ──
         try {
-            return tx.execute(status -> {
-                OperationResult result = work.get();
-                String body = json.writeValueAsString(result.body());
-                if (repo.complete(key, token, result.status(), body, result.journalId()) == 0) {
-                    // FENCING: our lease expired and someone took over. Throwing rolls back
-                    // the money movement we just made, so it can't happen twice.
-                    throw new WalletException(ErrorCode.TRY_AGAIN, "Lost ownership of idempotency key " + key);
-                }
-                return new IdempotentResponse(result.status(), body, false);
-            });
+            return runWorkWithRetry(key, token, work);
         } catch (WalletException e) {
             // ── Tx3a: business outcome (4xx) is final → store it, replay it on retry ──
             if (e.code().httpStatus() < 500) {
@@ -82,6 +82,46 @@ public class IdempotencyService {
             log.warn("Releasing idempotency key {} after failure: {}", key, e.toString());
             repo.release(key, token);
             throw e;
+        }
+    }
+
+    /**
+     * One Tx2 attempt = re-read, re-check, re-write. With pessimistic locking a conflict never
+     * happens, so this runs once. With optimistic locking a {@link ConcurrencyConflictException}
+     * has already rolled the attempt back, so re-running it from scratch is safe.
+     */
+    private IdempotentResponse runWorkWithRetry(String key, UUID token, Supplier<OperationResult> work) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return tx.execute(status -> {
+                    OperationResult result = work.get();
+                    String body = json.writeValueAsString(result.body());
+                    if (repo.complete(key, token, result.status(), body, result.journalId()) == 0) {
+                        // FENCING: our lease expired and someone took over. Throwing rolls back
+                        // the money movement we just made, so it can't happen twice.
+                        throw new WalletException(ErrorCode.TRY_AGAIN, "Lost ownership of idempotency key " + key);
+                    }
+                    return new IdempotentResponse(result.status(), body, false);
+                });
+            } catch (ConcurrencyConflictException e) {
+                metrics.conflict();
+                if (attempt >= optimisticMaxAttempts) {
+                    metrics.exhausted();
+                    throw new WalletException(ErrorCode.TRY_AGAIN, "Too much contention, retry later");
+                }
+                backoff(attempt);
+            }
+        }
+    }
+
+    /** Random, growing pause so the conflicting transactions don't collide again in lock-step. */
+    private static void backoff(int attempt) {
+        long maxMillis = Math.min(50, 2L << attempt);
+        try {
+            Thread.sleep(ThreadLocalRandom.current().nextLong(1, maxMillis + 1));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new WalletException(ErrorCode.TRY_AGAIN, "Interrupted");
         }
     }
 

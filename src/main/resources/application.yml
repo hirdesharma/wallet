@@ -6,6 +6,9 @@ spring:
     username: wallet
     password: wallet
     hikari:
+      # O-3 / ADR-003: sized to the DATABASE, not to request threads. With pessimistic locking a
+      # bigger pool doesn't speed up hot rows; with optimistic it causes MORE conflicts.
+      maximum-pool-size: 10
       # O-3: never wait forever for a row lock. A blocked transaction fails with
       # SQLState 55P03 → 503 TRY_AGAIN instead of hanging the request.
       connection-init-sql: SET lock_timeout = '5s'
@@ -13,6 +16,11 @@ spring:
     enabled: true
 
 wallet:
+  ledger:
+    # ADR-003: PESSIMISTIC (ordered FOR UPDATE) or OPTIMISTIC (version check + retry)
+    locking: PESSIMISTIC
+    # OPTIMISTIC only: how many times the whole operation is re-run after a version conflict
+    optimistic-max-attempts: 10
   idempotency:
     # How long a claimed key stays IN_PROGRESS before another request may take it over (ADR-004).
     lease-seconds: 30

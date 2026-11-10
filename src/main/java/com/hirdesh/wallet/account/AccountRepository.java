@@ -11,7 +11,7 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class AccountRepository {
 
-    private static final String COLUMNS = "id, type, user_id, code, balance";
+    private static final String COLUMNS = "id, type, user_id, code, balance, version";
 
     private static final RowMapper<Account> MAPPER = (ResultSet rs, int i) -> mapRow(rs);
 
@@ -61,12 +61,28 @@ public class AccountRepository {
                 .update();
     }
 
+    /**
+     * Optimistic write: succeeds only if nobody changed the row since we read {@code expectedVersion}.
+     * If another transaction holds the row, Postgres waits for it, then re-checks the WHERE
+     * against the committed row — so a stale version always matches 0 rows.
+     */
+    public boolean addToBalanceIfVersion(long id, long delta, long expectedVersion) {
+        return jdbc.sql("""
+                        UPDATE accounts SET balance = balance + :delta, version = version + 1
+                        WHERE id = :id AND version = :version""")
+                .param("delta", delta)
+                .param("id", id)
+                .param("version", expectedVersion)
+                .update() == 1;
+    }
+
     private static Account mapRow(ResultSet rs) throws SQLException {
         return new Account(
                 rs.getLong("id"),
                 AccountType.valueOf(rs.getString("type")),
                 rs.getString("user_id"),
                 rs.getString("code"),
-                rs.getLong("balance"));
+                rs.getLong("balance"),
+                rs.getLong("version"));
     }
 }
