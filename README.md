@@ -7,7 +7,8 @@ A digital wallet whose goal is **correctness**: money is never created, lost or 
 2. [Requirements & scope](docs/01-requirements.md)
 3. [High-level design](docs/02-hld.md)
 4. [Low-level design](docs/03-lld.md)
-5. [Decision records](docs/adr/)
+5. [Request flows](docs/04-flows.md): every request traced through the code, with sequence diagrams and line links
+6. [Decision records](docs/adr/)
 
 ## Progress
 | Milestone | Status |
